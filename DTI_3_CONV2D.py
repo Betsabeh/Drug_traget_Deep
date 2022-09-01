@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-
 @author: betsa
 """
 #!pip install keras_tuner
@@ -97,9 +96,10 @@ def read_simarity(file_name):
 def create_Interaction_mat(Win_s,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_Train,Y_Test,Drug_S,Prot_S):
     N_Tr=len(ind_d_Tr)
     N_Te=len(ind_d_Te)
+    Temp_Y_matrix=np.zeros(np.shape(Y_matrix))
     #Remove Test values from Y
-    for i in range(0,N_Te):
-        Y_matrix[ind_d_Te[i]][ind_p_Te[i]]=0
+    for i in range(0,N_Tr):
+        Temp_Y_matrix[ind_d_Tr[i]][ind_p_Tr[i]]=Y_matrix[ind_d_Tr[i]][ind_p_Tr[i]]
 
     # sort drug and protein based on similarity
     S1=np.array(Drug_S)
@@ -116,7 +116,7 @@ def create_Interaction_mat(Win_s,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_
         ind1=Sorted_drug_ind[ind1][-Win_sd:]
         ind2=ind_p_Tr[i]
         ind2=Sorted_prot_ind[ind2][-Win_sp:]
-        t1=Y_matrix[ind1][:]
+        t1=Temp_Y_matrix[ind1][:]
         temp_Y=t1[:,ind2]
         temp_Y=np.array(temp_Y)
         temp_Y1=temp_Y
@@ -134,7 +134,7 @@ def create_Interaction_mat(Win_s,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_
         ind1=Sorted_drug_ind[ind1][-Win_sd:]
         ind2=ind_p_Te[i]
         ind2=Sorted_prot_ind[ind2][-Win_sp:]
-        t1=Y_matrix[ind1][:]
+        t1=Temp_Y_matrix[ind1][:]
         temp_Y=t1[:,ind2]
         temp_Y=np.array(temp_Y)
         avg=np.mean(temp_Y[np.nonzero(temp_Y)])
@@ -200,12 +200,15 @@ def create_sim_mat(Win_s,ind_Tr,ind_Te,Similarity):
 def cross_validation_Train_Test1(index_d,index_p,Y,num_fold,curr_fold,mode):
     N=len(index_d)
     fold_size=np.floor(N/num_fold)
+    #print("fold_size=",fold_size)
     np.random.seed(8453)
     index=np.random.permutation(N)
     index=np.array(index)
     if mode=='Warm':
         low=np.int64((curr_fold-1)*fold_size)
         high=np.int64(curr_fold*fold_size)
+        if curr_fold==num_fold:
+          high=N
         Test_ind=index[low:high]
         Train_ind=np.setdiff1d(range(0,N) ,Test_ind)
         Test_ind=np.array(Test_ind)
@@ -216,12 +219,16 @@ def cross_validation_Train_Test1(index_d,index_p,Y,num_fold,curr_fold,mode):
         index_p=np.array(index_p)
         ind_d_Tr=index_d[Train_ind]
         ind_p_Tr=index_p[Train_ind]
+        #print("len train drug",len(ind_d_Tr))
         ind_d_Te=index_d[Test_ind]
         ind_p_Te=index_p[Test_ind]
+        #print("len test drug",len(ind_d_Te))
         Y=np.array(Y)
         Y_Train=Y[Train_ind]
         Y_Test=Y[Test_ind]
-        #pdb.set_trace()
+        #print('len Y_test',len(Y_Test))
+        #print('len Y_train',len(Y_Train))
+        pdb.set_trace()
 
 
 
@@ -470,67 +477,114 @@ def NN_model(drug_info,prot_info,interaction_info,num_hidden,num_units):
                 metrics=[tf.keras.metrics.RootMeanSquaredError()])
     return mdl
 # -------------------------------------------
+def Model_Training (mdl,X_Train,Y_Train,X_Test,Y_Test):
+  epochs=100
+  print('=================== Fit the model ======================')
+  pdb.set_trace()
+  Train_result=mdl.fit(X_Train,Y_Train,epochs=epochs,verbose=2)
+  #print(mdl.get_weights())
+  print('======================================================')
+  hist=Train_result.history
+  fig=plt.pyplot.figure(figsize=(12,6))
+  ax=fig.add_subplot(1,3,1)
+  ax.plot(hist['loss'])
+  ax.set_title('Train loss')
+  ax=fig.add_subplot(1,3,2)
+  ax.plot(hist['root_mean_squared_error'])
+  ax.set_title('RMSE Train')
+  #print('-------------Test Result--------------------')
+  #Y_Test=np.array(Y_Test)
+  #Test_result=mdl.evaluate(x=([Input_D_Te,Input_P_Te,Input_I_Te]),y=Y_Test,verbose=2)
+  #print('-----------------------------------')
+  #print('---------------Result--------------')
+  #print(Test_result)
+  # Test
+  Y_hat1=mdl.predict(X_Test)
+  #print(np.shape(Y_hat1))
+  Y_Test=np.reshape(Y_Test,np.shape(Y_hat1))
+  MSE_Test=np.mean((Y_Test-Y_hat1)**2)
+  RMSE_Test=np.sqrt(MSE_Test)
+  print('---------------MY Test Errors------------------')
+  print('MSE=',MSE_Test,'RMSE=',RMSE_Test)
+  print('------------individual Test error first 10 data-------------')
+  t=0
+  for i in range(len(Y_Test)):
+    er=(Y_Test[i]-Y_hat1[i])**2
+    if i<10:
+        print("\nTure=",np.round(Y_Test[i],3))
+        print("\nPredict=",np.round(Y_hat1[i],3))
+        print("\nerror=",np.round(er,3))
+        print('\n******************************************')
+    t=er+t
+  print('========================================')  
+  print("manual RMSE Test=", np.sqrt(t/len(Y_Test)))
+  #Train
+  Y_hat2=mdl.predict(X_Train)
+  Y_Train=np.array(Y_Train)
+  Y_Train=np.reshape(Y_Train,np.shape(Y_hat2))
+  MSE_Train=np.mean((Y_Train-Y_hat2)**2)
+  RMSE_Train=np.sqrt(MSE_Train)
+  print('----------------- MY Train Errors------------------')
+  print('MSE=',MSE_Train,'RMSE=',RMSE_Train)
 
-
-def CV_evaluation(drug_info,prot_info,interaction_info,index_d,index_p,Y,Y_matrix ,mdl,num_fold,Drug_S,Prot_S):
+  ax=fig.add_subplot(1,3,3)
+  ax.plot(Y_hat1,Y_Test,'o')
+  ax.plot(range(4,11),range(4,11),'r:o')
+  ax.set_xlabel('Predicted label',size=10)
+  ax.set_ylabel('True label',size=10)
+  plt.pyplot.show()
+  return MSE_Train, RMSE_Train, MSE_Test,RMSE_Test
+#----------------------------------------------
+def CV_evaluation(drug_info,prot_info,interaction_info,num_hidden,num_units,index_d,index_p,Y,Y_matrix ,num_fold,Drug_S,Prot_S):
     # parameters
-    epochs=100
-    batch_size=64
     folds=range(1,num_fold+1)
-    error=[]
+    print(folds)
+    All_MSE_Test=[]
+    All_RMSE_Test=[]
     for i in folds:
+        print("===============================fold ",i,"=================================")
         ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_Train,Y_Test=cross_validation_Train_Test1(index_d,
                                                                                         index_p,Y,num_fold,i,'Warm')
 
 
         print('Drug Data preparation')
         Input_D_Tr,Input_D_Te=create_sim_mat(drug_info.win_size,ind_d_Tr,ind_d_Te,Drug_S)
+        #print('drug train',len(Input_D_Tr))
+        #print('drug test',len(Input_D_Te))
         print('portein Data preparation')
         Input_P_Tr,Input_P_Te=create_sim_mat(prot_info.win_size,ind_p_Tr,ind_p_Te,Prot_S)
+        #print('prot train',len(Input_P_Tr))
+        #print('prot test',len(Input_P_Te))
         print('Interaction Data preparation')
         Input_I_Tr,Input_I_Te=create_Interaction_mat(interaction_info.win_size,ind_d_Tr,
                                                      ind_p_Tr,ind_d_Te,ind_p_Te,
                                                      Y_matrix,Y_Train,Y_Test,
                                                      Drug_S,Prot_S)
-
-
-        Train_result=mdl.fit(([Input_D_Tr,Input_P_Tr,Input_I_Tr]),Y_Train,epochs=epochs,verbose=2)
-        #print(mdl.get_weights())
-
-        print('======================================================')
-        hist=Train_result.history
-        fig=plt.pyplot.figure(figsize=(12,6))
-        ax=fig.add_subplot(1,3,1)
-        ax.plot(hist['loss'])
-        ax.set_title('Train loss')
-        ax=fig.add_subplot(1,3,2)
-        ax.plot(hist['root_mean_squared_error'])
-        ax.set_title('RMSE Train')
-
-
-
-        print('-------------Test Result--------------------')
-        # Test
-        Y_hat1=mdl.predict(([Input_D_Te,Input_P_Te,Input_I_Te]))
-        error.append(np.sqrt(np.mean((Y_Test-Y_hat1)**2)))
-        print('---------------MY Test RMSE Error------------------')
-        print(error)
-        #Train
-        Y_hat2=mdl.predict(([Input_D_Tr,Input_P_Tr,Input_I_Tr]))
-        error_train=(np.sqrt(np.mean((Y_Train-Y_hat2)**2)))
-        print('-----------------MT Train RMSE Error------------------')
-        print(error_train)
-
-        Y_Test=np.array(Y_Test)
-        Y_Test=np.reshape(Y_Test,np.shape(Y_hat1))
-        ax=fig.add_subplot(1,3,3)
-        ax.plot(Y_hat1,Y_Test,'o')
-        ax.plot(range(4,11),range(4,11),'r:o')
-        ax.set_xlabel('Predicted label',size=10)
-        ax.set_ylabel('True label',size=10)
-        plt.pyplot.show()
-
+        #print('Inter train',len(Input_I_Tr))
+        #print('Inter test',len(Input_I_Te))
+        
+        
+        X_Train=([Input_D_Tr,Input_P_Tr,Input_I_Tr])
+        X_Test=([Input_D_Te,Input_P_Te,Input_I_Te])
+        print(len(X_Train))
+        mdl=NN_model(drug_info,prot_info,interaction_info,num_hidden,num_units)
+        MSE_Train, RMSE_Train, MSE_Test,RMSE_Test=Model_Training (mdl,X_Train,Y_Train,X_Test,Y_Test)
+        All_MSE_Test.append(MSE_Test)
+        All_RMSE_Test.append(RMSE_Test)
         pdb.set_trace()
+    #--------------------------------------------------
+    All_MSE_Test=np.array(All_MSE_Test)
+    AVG_5folf_MSE=np.mean(All_MSE_Test)
+    Std_5folf_MSE=np.std(All_MSE_Test)
+    All_RMSE_Test=np.array(All_RMSE_Test)
+    AVG_5folf_RMSE=np.mean(All_RMSE_Test)
+    Std_5folf_RMSE=np.std(All_RMSE_Test)
+    print('========================5 fold results===========================')
+    print('MSE :Avg+std=',AVG_5folf_MSE,'+',Std_5folf_MSE)
+    print('RMSE: Avg+std=',AVG_5folf_RMSE,'+',Std_5folf_RMSE)
+
+
+
 
 #-------------------------------------------
 #-------------------------------------------
@@ -548,12 +602,11 @@ All_P_id,Prot_S=read_simarity(f_name)
 index_d,index_p,Y,Y_matrix =create_dataset(Prot_name, Drug_id, KD_val,All_D_id,All_P_id)
 
 # 4- create model
-drug_info=con_layer(1,16,[(3,3)],(15,15))
+drug_info=con_layer(2,16,[(3,3)],(15,15))
 prot_info=con_layer(1, 32, [(3,3)],(15,15))
-interaction_info=con_layer(1, 32, [(9,7)],(15,15))
+interaction_info=con_layer(1, 64, [(9,7)],(15,15))
 num_hidden=2
 num_units=256
 #drug_info,prot_info,interaction_info,num_hidden,num_units=set_parameters(index_d,index_p,Y,Y_matrix)
-mdl=NN_model(drug_info,prot_info,interaction_info,num_hidden,num_units)
 # 5- 5-CV evaluation
-CV_evaluation(drug_info,prot_info,interaction_info,index_d,index_p,Y,Y_matrix ,mdl,5,Drug_S,Prot_S)
+CV_evaluation(drug_info,prot_info,interaction_info,num_hidden,num_units,index_d,index_p,Y,Y_matrix ,5,Drug_S,Prot_S)
