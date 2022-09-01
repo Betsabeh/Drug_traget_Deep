@@ -602,7 +602,7 @@ All_P_id,Prot_S=read_simarity(f_name)
 index_d,index_p,Y,Y_matrix =create_dataset(Prot_name, Drug_id, KD_val,All_D_id,All_P_id)
 
 # 4- create model
-drug_info=con_layer(2,16,[(3,3)],(15,15))
+drug_info=con_layer(1,16,[(3,3)],(15,15))
 prot_info=con_layer(1, 32, [(3,3)],(15,15))
 interaction_info=con_layer(1, 64, [(9,7)],(15,15))
 num_hidden=2
