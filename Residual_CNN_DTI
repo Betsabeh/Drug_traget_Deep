@@ -1,0 +1,615 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jul  6 07:56:25 2022
+
+@author: betsa
+"""
+#!pip install keras_tuner
+
+import numpy as np
+import tensorflow as tf
+import pandas as pd
+import matplotlib as plt
+import csv
+import pdb
+import keras_tuner as kt
+from keras_tuner import HyperParameter, HyperParameters
+from kerastuner.tuners import RandomSearch
+from kerastuner.tuners import Hyperband
+from keras_tuner import Objective
+from sklearn.neighbors import KNeighborsRegressor
+import math
+#----------------------------------------
+
+def read_data(file_name):
+    f=open(file_name)
+    data=csv.reader(f)
+    Drug_id=next(data)
+    Drug_id=Drug_id[4:]
+    next(data)
+    next(data)
+    #   print(Drug_id)
+    Prot_name=[]
+    KD_val=[]
+    for r in data:
+        Prot_name.append(r[2])
+        temp=r[4:]
+        temp1=[]
+        for t in temp:
+            if t=='':
+                temp1.append(10000)
+            else:
+                temp1.append(float(t))
+
+        KD_val.append(temp1)
+
+
+    return Prot_name, Drug_id, KD_val
+#-------------------------------------------
+#-------------------------------------------
+def create_dataset(Prot_name, Drug_id, KD_val,All_D_id,All_P_id):
+    num_drug=len(All_D_id)
+    num_prot=len(All_P_id)
+    index_d=[]
+    index_p=[]
+    Y_matrix=np.zeros(shape=(num_drug,num_prot))
+    Y=[]
+    KD_val=np.array(KD_val)
+    t=KD_val/(10**9)
+    KD_val=-1*np.log10(t)
+    for i in range(num_drug):
+        temp=[]
+        #s1=np.array(Drug_S[index_d])
+        for j in range(num_prot):
+            ind1=All_D_id.index(Drug_id[i])
+            index_d.append(ind1)
+            ind2=All_P_id.index(Prot_name[j])
+            index_p.append(ind2)
+            #s2=np.array(Prot_S[index_p])
+            #feature=np.concatenate((s1,s2))
+            # a=interaction(index_d, index_p,feature)
+            #X.append(feature)
+            temp.append(KD_val[j][i])
+            Y.append(KD_val[j][i])
+            Y_matrix[ind1][ind2]=KD_val[j][i]
+        '''if (len(Y)>5000):
+                break'''
+
+
+
+    return index_d,index_p,Y,Y_matrix
+#-------------------------------------------
+def read_simarity(file_name):
+    f=open(file_name)
+    Data=csv.reader(f)
+    ID=next(Data)
+    N=len(ID)
+    i=0
+    S=tf.zeros(shape=(N,N),dtype=tf.float64)
+    for temp in Data:
+        # j=0
+        #for t2 in temp:
+        v=np.float64(temp)
+        S=tf.tensor_scatter_nd_update(S, [[i,]], [v])
+        #  j=j+1
+        i=i+1
+
+
+    return ID, S
+#--------------------------------------------
+#--------------------------------------------
+def cross_validation_Train_Test1(index_d,index_p,Y,num_fold,curr_fold,mode):
+    N=len(index_d)
+    fold_size=np.floor(N/num_fold)
+    #print("fold_size=",fold_size)
+    np.random.seed(8453)
+    index=np.random.permutation(N)
+    index=np.array(index)
+    if mode=='Warm':
+        low=np.int64((curr_fold-1)*fold_size)
+        high=np.int64(curr_fold*fold_size)
+        if curr_fold==num_fold:
+          high=N
+        Test_ind=index[low:high]
+        Train_ind=np.setdiff1d(range(0,N) ,Test_ind)
+        Test_ind=np.array(Test_ind)
+        Train_ind=np.array(Train_ind)
+        print('Train==',len(Train_ind))
+        print('Test==',len(Test_ind))
+        index_d=np.array(index_d)
+        index_p=np.array(index_p)
+        ind_d_Tr=index_d[Train_ind]
+        ind_p_Tr=index_p[Train_ind]
+        #print("len train drug",len(ind_d_Tr))
+        ind_d_Te=index_d[Test_ind]
+        ind_p_Te=index_p[Test_ind]
+        #print("len test drug",len(ind_d_Te))
+        Y=np.array(Y)
+        Y_Train=Y[Train_ind]
+        Y_Test=Y[Test_ind]
+        #print('len Y_test',len(Y_Test))
+        #print('len Y_train',len(Y_Train))
+        pdb.set_trace()
+
+    return ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_Train,Y_Test
+#-------------------------------------------
+def fill_zeros(option,temp_Y,ind1,ind2,Win_sd,Win_sp,S1,S2):
+  if option=='Full':
+    temp_Y1=list(temp_Y)
+    temp_Y1=np.array(temp_Y1)
+    index=np.argwhere(temp_Y==0)
+    for item in index:
+      n=item[0]
+      m=item[1]
+      drug=ind1[n]
+      prot=ind2[m]
+      div1=0
+      div2=0
+      for j in range(Win_sd):
+        for k in range(Win_sp):
+           if (temp_Y[j][k]!=0):
+             temp_s1=S1[ind1[j]][drug]
+             temp_s2=S2[ind2[k]][prot]
+             temp_s=temp_s1*temp_s2
+             div1=div1+temp_s
+             div2=div2+temp_Y[j][k]*temp_s
+             temp_Y1[item[0]][item[1]]=div2/div1
+  if option=='W_KNN_Vector':
+       X_Tr=[]
+       X_Te=[]
+       Y_Tr=[]
+       for i in range(Win_sd):
+         for j in range(Win_sp):
+           v1=S1[ind1[i]][:]
+           v1=v1[ind1]
+           v2=S2[ind2[j]][:]
+           v2=v2[ind2]
+           temp=np.concatenate([v1,v2])
+           if (temp_Y[i][j]!=0):
+             X_Tr.append(temp)
+             Y_Tr.append(temp_Y[i][j])
+           else:
+             X_Te.append(temp) 
+      
+       
+       X_Tr=np.array(X_Tr)
+       X_Te=np.array(X_Te)
+       Y_Tr=np.array(Y_Tr)
+       mdl=KNeighborsRegressor(n_neighbors=2, weights='distance',
+                               metric= 'minkowski',p=2)
+       mdl.fit(X_Tr,Y_Tr)
+       Y_Te=mdl.predict(X_Te)
+       l=0
+       temp_Y1=temp_Y
+       for i in range(Win_sd):
+         for j in range(Win_sp):
+           if (temp_Y[i][j]==0):
+             temp_Y1[i][j]=Y_Te[l]
+             l=l+1
+  if (option=='avg'):
+     non_z=temp_Y[np.nonzero(temp_Y)]
+     avg=np.mean(non_z)
+     temp_Y1=list(temp_Y)
+     temp_Y1=np.array(temp_Y1)
+     index=np.argwhere(temp_Y==0)
+     for item in index:
+       temp_Y1[item[0]][item[1]]=avg
+
+        
+             
+
+            
+  return temp_Y1
+#-----------------------------------------
+def fill_all(ind_d_Tr,ind_p_Tr,Temp_Y_matrix,Y_Train,Y_matrix,Drug_S,Prot_S):
+    N_Tr=len(ind_d_Tr)
+    S1=np.array(Drug_S)
+    S2=np.array(Prot_S)
+    X_Tr=[]
+    for i in range(N_Tr):
+           v1=S1[ind_d_Tr[i]][:]
+           v2=S2[ind_p_Tr[i]][:]
+           temp=np.concatenate([v1,v2])
+           X_Tr.append(temp)    
+      
+    X_Tr=np.array(X_Tr)
+    mdl=KNeighborsRegressor(n_neighbors=3, weights='distance',
+                               metric= 'minkowski',p=2)
+    mdl.fit(X_Tr,Y_Train)
+    index=np.argwhere(Temp_Y_matrix==0)
+    X_te=[]
+    True_value=[]
+    for item in index:
+           index_dr=item[0]
+           index_pr=item[1]
+           vec1=S1[index_dr][:]
+           vec2=S2[index_pr][:]
+           temp=np.concatenate([vec1,vec2])
+           X_te.append(temp)
+           True_value.append(Y_matrix[index_dr][index_pr])
+
+    True_value=np.array(True_value)
+    X_te=np.array(X_te)
+    Y_Te=mdl.predict(X_te)
+    Y_Te=np.array(Y_Te)
+    index=np.argwhere(Temp_Y_matrix==0)
+    i=0
+    for item in index:
+           index_dr=item[0]
+           index_pr=item[1]
+           Temp_Y_matrix[index_dr][index_pr]=Y_Te[i]
+           i=i+1
+
+    
+    print('---------------------MSE WKNN----------------------')
+    MSE_WKNN=np.mean((True_value-Y_Te)**2)
+    print(MSE_WKNN)
+    
+    pdb.set_trace()
+    print('----------------------------------------------------')
+    return Temp_Y_matrix
+         
+#------------------------------------------
+def cal_similarity(Y_matrix,mode):
+  if mode=='drug':
+    N=np.shape(Y_matrix)
+    N=N[0]
+    S=np.zeros(shape=(N,N))
+    for i in range(N):
+        for j in range(i,N):
+          #print(np.shape(Y_matrix[i][:]))
+          d=np.linalg.norm(np.array(Y_matrix[i][:])-np.array(Y_matrix[j][:]))
+          S[i][j]=math.exp(-d/2.0)
+          S[j][i]=S[i][j]
+
+  if mode=='prot':
+    Y_matrix=np.transpose(Y_matrix)
+    N=np.shape(Y_matrix)
+    N=N[0]
+    print(N)
+    S=np.zeros(shape=(N,N))
+    for i in range(N):
+        for j in range(i,N):
+          #print(np.shape(Y_matrix[i][:]))
+          d=np.linalg.norm(Y_matrix[i][:]-Y_matrix[j][:])
+          S[i][j]=math.exp(-d/2.0)
+          S[j][i]=S[i][j]
+          #pdb.set_trace()
+  return S
+#------------------------------------------
+def create_Interaction_mat(Win_s,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_Train,Y_Test,Drug_S,Prot_S):
+    N_Tr=len(ind_d_Tr)
+    N_Te=len(ind_d_Te)
+    Temp_Y_matrix=np.zeros(np.shape(Y_matrix))
+    #Remove Test values from Y
+    for i in range(0,N_Tr):
+        Temp_Y_matrix[ind_d_Tr[i]][ind_p_Tr[i]]=Y_matrix[ind_d_Tr[i]][ind_p_Tr[i]]
+
+    pdb.set_trace()
+    #Temp_Y_matrix=fill_all(ind_d_Tr,ind_p_Tr,Temp_Y_matrix,Y_Train,Y_matrix,Drug_S,Prot_S)    
+    Drug_S1=Drug_S#+cal_similarity(Temp_Y_matrix,'drug')
+    Prot_S1=Prot_S#+cal_similarity(Temp_Y_matrix,'prot')
+
+    # sort drug and protein based on similarity
+    S1=np.array(Drug_S1)
+    S2=np.array(Prot_S1)
+    Sorted_drug_ind=np.argsort(S1)
+    Sorted_prot_ind=np.argsort(S2)
+    Win_sd=Win_s[0]
+    Win_sp=Win_s[1]
+    X_Train=[]
+    X_Test=[]
+    #fig=plt.pyplot.figure(figsize=(12,4))
+    for i in range(0,N_Tr):
+        index_d=ind_d_Tr[i]
+        #print(index_d)
+        ind1=Sorted_drug_ind[index_d][-Win_sd:]
+        index_p=ind_p_Tr[i]
+        #print(index_p)
+        ind2=Sorted_prot_ind[index_p][-Win_sp:]
+        t1=Temp_Y_matrix[ind1][:]
+        temp_Y=t1[:,ind2]
+        temp_Y=np.array(temp_Y)
+        temp_Y[-1][-1]=0
+        #non_z=temp_Y[np.nonzero(temp_Y)]
+        #print("non zero values",non_z)
+        #avg=np.mean(non_z)
+        #X=fill_zeros('avg',temp_Y,ind1,ind2,Win_sd,Win_sp,S1,S2)
+        X_Train.append(temp_Y)
+        #---------
+    for i in range(0,N_Te):
+        index_d=ind_d_Te[i]
+        ind1=Sorted_drug_ind[index_d][-Win_sd:]
+        index_p=ind_p_Te[i]
+        ind2=Sorted_prot_ind[index_p][-Win_sp:]
+        t1=Temp_Y_matrix[ind1][:]
+        temp_Y=t1[:,ind2]
+        temp_Y=np.array(temp_Y)
+        temp_Y[-1][-1]=0
+        #avg=np.mean(temp_Y[np.nonzero(temp_Y)])
+        #X=fill_zeros('avg',temp_Y,ind1,ind2,Win_sd,Win_sp,S1,S2)
+        X_Test.append(temp_Y)
+        '''if (i<3):
+           ax=fig.add_subplot(2,3,i+1)
+           ax.imshow(temp_Y)'''
+
+
+
+
+    #plt.pyplot.show()
+    #pdb.set_trace()
+
+    X_Train=tf.convert_to_tensor(X_Train)
+    X_Test=tf.convert_to_tensor(X_Test)
+    del Temp_Y_matrix
+
+    return X_Train, X_Test
+#-------------------------------------------
+class con_layer:
+    def __init__(self,num_con,num_filter,kernel_size,win_size,num_hidden,num_units,Drop_out):
+        self.num_con=num_con
+        self.num_filter=num_filter
+        self.win_size=win_size
+        self.Drop_out=Drop_out
+        self.num_hidden=num_hidden
+        self.num_units=num_units
+        self.kernel_size=np.zeros(shape=(num_con,2),dtype=np.int32)
+        for i in range(num_con):
+           self.kernel_size[i][0]=kernel_size[i][0]
+           self.kernel_size[i][1]=kernel_size[i][1]
+#------------------------------------------
+def NN_model1(hp):
+  # Inputs
+    Input_D=tf.keras.layers.Input(shape=(5,5,1))
+    XD=Input_D
+    
+    #
+    Max_kernel=np.array([1,2,3])
+    #-----------------------------------------
+    #Drug
+    filter=hp.Choice('num_filter',values=[16,32])
+    num_con=hp.Choice('num_Conv_layer',values=[4])
+    Drop=hp.Choice('Dropout',values=[0.1])
+    for i in range(num_con):
+           kernel_size0=hp.Int('kenel_size_0_'+str(i),min_value=1, max_value=3,step=1)#Max_kernel[i]
+           kernel_size1=hp.Int('kenel_size_1_'+str(i),min_value=1, max_value=3,step=1)#Max_kernel[i]
+           kernel_size=(kernel_size0,kernel_size1)
+           XD=tf.keras.layers.Conv2D(filters=filter*(2**i),
+                                  kernel_size=kernel_size,
+                                  activation='relu',padding='same',
+                                  name= 'conv_layer'+str(i), strides=(1,1))(XD)
+           XD=tf.keras.layers.Add()([XD,Input_D])
+           XD=tf.keras.layers.Dropout(Drop)(XD)
+           #XD=tf.keras.layers.AveragePooling2D(strides=(2,2),pool_size=(2,2))(XD)
+
+    #--------------------------------------
+    XD=tf.keras.layers.Conv2D(filters=1,
+                                  kernel_size=(1,1),
+                                  activation='relu',padding='same',
+                                  name= 'last', strides=(1,1))(XD)    
+    #XD=tf.keras.layers.Add()([XD,Input_D])       
+    X=tf.keras.layers.Flatten()(XD)
+    #--------------------------------------------------
+    num_hidden=hp.Choice('num_hidden',values=[0])
+    num_units=hp.Choice('num_units',values=[0])
+
+    for i in range(0,num_hidden):
+        X=tf.keras.layers.Dense(units=num_units,activation='linear',
+                                name='Dense_layer'+str(i))(X)
+        X=tf.keras.layers.Dropout(rate=0.7)(X)
+        num_units=np.floor(num_units/2)
+
+    #-------------------------------------------------
+    #output
+
+    prediction=tf.keras.layers.Dense(units=1,activation=None)(X)
+    #-------------------------------------------------
+    #Model
+    mdl=tf.keras.Model(inputs=[Input_D],outputs=[prediction])
+    mdl.compile(optimizer=tf.keras.optimizers.Adam(),
+                loss=tf.keras.losses.MeanSquaredError(),
+                metrics=['mse',tf.keras.metrics.RootMeanSquaredError()])
+    return mdl
+#-------------------------------------------
+def set_parameters(index_d,index_p,Y,Y_matrix):
+  # parameters
+    global option
+    fold=1 #second fold
+    ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_Train,Y_Test=cross_validation_Train_Test1(index_d,
+                            index_p,Y,5,fold,'Warm')
+    win_size=np.array([5,5]) 
+    X_Train,X_Test=create_Interaction_mat(win_size,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_Train,Y_Test,Drug_S,Prot_S)
+    #--------------------------------------------
+    #--------------------------------------------
+    # find best Prot parameters
+    print('===============Run set Hyperparam==============')
+    tuner2=RandomSearch(NN_model1,objective="val_mse",max_trials=80,overwrite=True)
+    tuner2.search(X_Train,Y_Train,epochs=6,validation_data=(X_Test,Y_Test))
+    #--------------------------------------------
+    print("***********************Best HyperParameters*********************************")
+    best_hps=tuner2.get_best_hyperparameters()[0]
+    print(best_hps.values)
+    num_hidden=best_hps['num_hidden']
+    num_units=best_hps['num_units']
+    #----------------------------------------------------
+    num_conn=best_hps['num_Conv_layer']
+    print(type(num_conn))
+    K=np.zeros(shape=(num_conn,2),dtype=np.int32)
+    for i in range(num_conn):
+      name='kenel_size_0_'+str(i)
+      K[i][0]=best_hps[name]
+      name='kenel_size_1_'+str(i)
+      K[i][1]=best_hps[name]
+  
+    net_info=con_layer(num_conn,best_hps['num_filter'],
+                        K,(5,5),best_hps['num_hidden'],best_hps['num_units'],
+                        best_hps['Dropout'])
+    
+
+    pdb.set_trace()
+    return net_info
+    
+#-------------------------------------------
+def NN_model(net_info):
+    # Inputs
+    Input_D=tf.keras.layers.Input(shape=(net_info.win_size[0],net_info.win_size[1],1))
+    XD=Input_D
+    num_f=net_info.num_filter
+    num_block=6
+    for j in range(num_block):
+      for i in range(0,net_info.num_con):
+        XD=tf.keras.layers.Conv2D(filters=num_f,
+                                kernel_size=(net_info.kernel_size[i][0],net_info.kernel_size[i][1]),
+                                activation='relu',padding='same',
+                                name= 'net_conn_'+str(j)+'_'+str(i), strides=(1,1))(XD)
+        #XD=tf.keras.layers.Dropout(net_info.Drop_out)(XD)                          
+
+      XD=tf.keras.layers.Add()([XD,Input_D])                          
+      num_f=num_f*2  
+
+    #--------------------------------
+    XD=tf.keras.layers.Conv2D(filters=1,
+                                  kernel_size=(1,1),
+                                  activation='relu',padding='same',
+                                  name= 'last', strides=(1,1))(XD)    
+    #XD=tf.keras.layers.Add()([XD,Input_D])    
+    #XD=tf.keras.layers.AveragePooling2D(strides=(2,2))(XD)
+    X=tf.keras.layers.Flatten()(XD)
+    #oUTOUT layer
+    
+    
+    #--------------------------------------------------'''
+    num_units=net_info.num_units
+    for i in range(0,net_info.num_hidden):
+        X=tf.keras.layers.Dense(units=num_units,activation='linear',name='Dense_layer'+str(i))(X)
+        X=tf.keras.layers.Dropout(rate=0.7)(X)
+        num_units=np.floor(num_units/2)
+    #-------------------------------------------------
+    #output
+    prediction=tf.keras.layers.Dense(units=1,activation=None)(X)
+    #-------------------------------------------------
+    #Model
+    mdl=tf.keras.Model(inputs=[Input_D],outputs=[prediction])
+    mdl.summary()
+    mdl.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                loss=tf.keras.losses.MeanSquaredError(),
+                metrics=[tf.keras.metrics.RootMeanSquaredError()])
+    return mdl
+# -------------------------------------------
+def Model_Training (mdl,X_Train,Y_Train,X_Test,Y_Test):
+  epochs=100
+  print('=================== Fit the model ======================')
+  pdb.set_trace()
+  Train_result=mdl.fit(X_Train,Y_Train,epochs=epochs,batch_size=256,verbose=2)
+  #print(mdl.get_weights())
+  print('======================================================')
+  hist=Train_result.history
+  fig=plt.pyplot.figure(figsize=(12,6))
+  ax=fig.add_subplot(1,3,1)
+  ax.plot(hist['loss'])
+  ax.set_title('Train loss')
+  ax=fig.add_subplot(1,3,2)
+  ax.plot(hist['root_mean_squared_error'])
+  ax.set_title('RMSE Train')
+  #print('-------------Test Result--------------------')
+  #Y_Test=np.array(Y_Test)
+  #Test_result=mdl.evaluate(x=([Input_D_Te,Input_P_Te,Input_I_Te]),y=Y_Test,verbose=2)
+  #print('-----------------------------------')
+  #print('---------------Result--------------')
+  #print(Test_result)
+  # Test
+  Y_hat1=mdl.predict(X_Test)
+  #print(np.shape(Y_hat1))
+  Y_Test=np.reshape(Y_Test,np.shape(Y_hat1))
+  MSE_Test=np.mean((Y_Test-Y_hat1)**2)
+  RMSE_Test=np.sqrt(MSE_Test)
+  print('---------------MY Test Errors------------------')
+  print('MSE=',MSE_Test,'RMSE=',RMSE_Test)
+  print('------------individual Test error first 10 data-------------')
+  t=0
+  for i in range(len(Y_Test)):
+    er=(Y_Test[i]-Y_hat1[i])**2
+    #if i<10:
+       # print("\nTure=",np.round(Y_Test[i],3))
+       # print("\nPredict=",np.round(Y_hat1[i],3))
+       #print("\nerror=",np.round(er,3))
+       # print('\n******************************************')
+    t=er+t
+  print('========================================')  
+  print("manual RMSE Test=", np.sqrt(t/len(Y_Test)))
+  #Train
+  Y_hat2=mdl.predict(X_Train)
+  Y_Train=np.array(Y_Train)
+  Y_Train=np.reshape(Y_Train,np.shape(Y_hat2))
+  MSE_Train=np.mean((Y_Train-Y_hat2)**2)
+  RMSE_Train=np.sqrt(MSE_Train)
+  print('----------------- MY Train Errors------------------')
+  print('MSE=',MSE_Train,'RMSE=',RMSE_Train)
+
+  ax=fig.add_subplot(1,3,3)
+  ax.plot(Y_hat1,Y_Test,'o')
+  ax.plot(range(4,11),range(4,11),'r:o')
+  ax.set_xlabel('Predicted label',size=10)
+  ax.set_ylabel('True label',size=10)
+  plt.pyplot.show()
+  return MSE_Train, RMSE_Train, MSE_Test,RMSE_Test
+#----------------------------------------------
+def CV_evaluation(net_info,index_d,index_p,Y,Y_matrix ,num_fold,Drug_S,Prot_S):
+    # parameters
+    folds=range(1,num_fold+1)
+    print(folds)
+    All_MSE_Test=[]
+    All_RMSE_Test=[]
+    for i in folds:
+        print("===============================fold ",i,"=================================")
+        ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_Train,Y_Test=cross_validation_Train_Test1(index_d,
+                                                                                        index_p,Y,num_fold,i,'Warm')
+
+
+        print('Data preparation')
+        X_Train,X_Test=create_Interaction_mat(net_info.win_size,ind_d_Tr,ind_p_Tr,ind_d_Te,ind_p_Te,Y_matrix,Y_Train,Y_Test,Drug_S,Prot_S)
+        
+
+        mdl=NN_model(net_info)
+        MSE_Train, RMSE_Train, MSE_Test,RMSE_Test=Model_Training (mdl,X_Train,Y_Train,X_Test,Y_Test)
+        All_MSE_Test.append(MSE_Test)
+        All_RMSE_Test.append(RMSE_Test)
+        del mdl
+        pdb.set_trace()
+    #--------------------------------------------------
+    All_MSE_Test=np.array(All_MSE_Test)
+    AVG_5folf_MSE=np.mean(All_MSE_Test)
+    Std_5folf_MSE=np.std(All_MSE_Test)
+    All_RMSE_Test=np.array(All_RMSE_Test)
+    AVG_5folf_RMSE=np.mean(All_RMSE_Test)
+    Std_5folf_RMSE=np.std(All_RMSE_Test)
+    print('========================5 fold results===========================')
+    print('MSE :Avg+std=',AVG_5folf_MSE,'+',Std_5folf_MSE)
+    print('RMSE: Avg+std=',AVG_5folf_RMSE,'+',Std_5folf_RMSE)
+
+
+
+
+#-------------------------------------------
+#-------------------------------------------
+#-------------------------------------------
+# 1-read dataset
+#path='E:\\PhD_thesis\\research\\semisuppervised\\drug_target\\thesis_code\\negative_examples\\checked_codes\\upload\\Code\\paper_2_code\\upload\\'
+f_name='Davis.csv'
+Prot_name,Drug_id,KD_val=read_data(f_name)
+# 2-read similarities
+f_name='Davis_Drug_Fingerprint_sim.csv'
+All_D_id,Drug_S=read_simarity(f_name)
+f_name='Davis_Prot_SW_sim.csv'
+All_P_id,Prot_S=read_simarity(f_name)
+# 3-create dataset
+index_d,index_p,Y,Y_matrix =create_dataset(Prot_name, Drug_id, KD_val,All_D_id,All_P_id)
+
+# 4- create model
+#num_con,num_filter,kernel_size,win_size,num_hidden,num_units,Drop_out
+net_info=con_layer(1,4,[(3,3)],[7,7],0,4,0.1)
+#print(net_info)
+
+#net_info=set_parameters(index_d,index_p,Y,Y_matrix)
+# 5- 5-CV evaluation
+CV_evaluation(net_info,index_d,index_p,Y,Y_matrix ,5,Drug_S,Prot_S)
